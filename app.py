@@ -5,6 +5,8 @@ app = Flask(__name__)
 
 app.json.ensure_ascii = False
 
+MAX_RATING = 5
+
 about_me = {
    "name": "Михаил",
    "surname": "Шарапов",
@@ -15,22 +17,26 @@ quotes = [
    {
        "id": 3,
        "author": "Rick Cook",
-       "text": "Программирование сегодня — это гонка разработчиков программ, стремящихся писать программы с большей и лучшей идиотоустойчивостью, и вселенной, которая пытается создать больше отборных идиотов. Пока вселенная побеждает."
+       "text": "Программирование сегодня — это гонка разработчиков программ, стремящихся писать программы с большей и лучшей идиотоустойчивостью, и вселенной, которая пытается создать больше отборных идиотов. Пока вселенная побеждает.",
+       "rating": 1
    },
    {
        "id": 5,
        "author": "Waldi Ravens",
-       "text": "Программирование на С похоже на быстрые танцы на только что отполированном полу людей с острыми бритвами в руках."
+       "text": "Программирование на С похоже на быстрые танцы на только что отполированном полу людей с острыми бритвами в руках.",
+       "rating": 2
    },
    {
        "id": 6,
        "author": "Mosher’s Law of Software Engineering",
-       "text": "Не волнуйтесь, если что-то не работает. Если бы всё работало, вас бы уволили."
+       "text": "Не волнуйтесь, если что-то не работает. Если бы всё работало, вас бы уволили.",
+       "rating": 2
    },
    {
        "id": 8,
        "author": "Yoggi Berra",
-       "text": "В теории, теория и практика неразделимы. На практике это не так."
+       "text": "В теории, теория и практика неразделимы. На практике это не так.",
+       "rating": 3
    },
 
 ]
@@ -39,10 +45,12 @@ quotes = [
 def new_quote_id():
    return quotes[len(quotes)-1]["id"] + 1 if len(quotes) > 0 else 0
 
+
 def find_quote(quote_id):
    for item in quotes:
       if item["id"] == quote_id:
          return item
+
 
 @app.route("/")
 def hello_world():
@@ -83,6 +91,8 @@ def create_quote():
    data = request.json
    new_quote = data.copy()
    new_quote["id"] = new_quote_id()
+   if not "rating" in data or data["rating"] > MAX_RATING:
+      new_quote["rating"] = 1
    quotes.append(new_quote)
    return new_quote, 201
 
@@ -94,7 +104,8 @@ def edit_qoute(quote_id):
    if quote:
       quote["author"] = data["author"]
       quote["text"] = data["text"]
-      return quote, 200
+      quote["rating"] = quote["rating"] if data["rating"] > MAX_RATING else data["rating"]
+      return quote, 201
    else:
       return f"Цитата с id={quote_id} не найдена для изменения", 404
 
@@ -108,6 +119,14 @@ def delete_quote(quote_id):
    else:
       return f"Цитата с id={quote_id} не найдена для удаления", 404
 
+
+@app.route("/quotes/filter")
+def filter_quotes():
+   args = request.args
+   author = args.get("author")
+   rating = args.get("rating")
+   result = [item for item in quotes if (not author or item["author"] == author) and (not rating or item["rating"] == int(rating))]
+   return result
 
 if __name__ == "__main__":
    app.run(debug=True)

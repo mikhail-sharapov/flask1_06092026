@@ -1,26 +1,15 @@
-from flask import Flask
+from flask import Flask, request
 from random import choice
 
 app = Flask(__name__)
 
 app.json.ensure_ascii = False
 
-
-@app.route("/")
-def hello_world():
-   return "Hello, World!"
-
-
 about_me = {
    "name": "Михаил",
    "surname": "Шарапов",
    "email": "unreal-nv@yandex.ru"
 }
-
-@app.route("/about")
-def about():
-   return about_me
-
 
 quotes = [
    {
@@ -46,26 +35,79 @@ quotes = [
 
 ]
 
+
+def new_quote_id():
+   return quotes[len(quotes)-1]["id"] + 1 if len(quotes) > 0 else 0
+
+def find_quote(quote_id):
+   for item in quotes:
+      if item["id"] == quote_id:
+         return item
+
+@app.route("/")
+def hello_world():
+   return "Hello, World!"
+
+
+@app.route("/about")
+def about():
+   return about_me
+
+
 @app.route("/quotes")
 def quotes_list():
    return quotes
 
+
 @app.route("/quotes/<int:quote_id>")
 def quote_by_id(quote_id):
-   for item in quotes:
-      if item["id"] == quote_id:
-         return item
+   quote = find_quote(quote_id)
+   if quote:
+      return quote
    else:
       return f"Цитата с id={quote_id} не найдена", 404
+
 
 @app.route("/quotes/count")
 def quotes_count():
    return {"count": len(quotes)}
 
+
 @app.route("/quotes/random")
 def random_quote():
    return choice(quotes)
    
+
+@app.route("/quotes", methods=['POST'])
+def create_quote():
+   data = request.json
+   new_quote = data.copy()
+   new_quote["id"] = new_quote_id()
+   quotes.append(new_quote)
+   return new_quote, 201
+
+
+@app.route("/quotes/<int:quote_id>", methods=["PUT"])
+def edit_qoute(quote_id):
+   data = request.json
+   quote = find_quote(quote_id)
+   if quote:
+      quote["author"] = data["author"]
+      quote["text"] = data["text"]
+      return quote, 200
+   else:
+      return f"Цитата с id={quote_id} не найдена для изменения", 404
+
+
+@app.route("/quotes/<int:quote_id>", methods=["DELETE"])
+def delete_quote(quote_id):
+   quote = find_quote(quote_id)
+   if quote:
+      quotes.remove(quote)
+      return f"Цитата с id={quote_id} успешно удалена", 200
+   else:
+      return f"Цитата с id={quote_id} не найдена для удаления", 404
+
 
 if __name__ == "__main__":
    app.run(debug=True)

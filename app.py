@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from random import choice
 
 app = Flask(__name__)
@@ -54,7 +54,7 @@ def find_quote(quote_id):
 
 @app.route("/")
 def hello_world():
-   return "Hello, World!"
+   return jsonify(data="Hello, World!")
 
 
 @app.route("/about")

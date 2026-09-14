@@ -1,5 +1,5 @@
 import sqlite3
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from random import choice
 from pathlib import Path
 
@@ -9,6 +9,36 @@ path_to_db = BASE_DIR / "store.db"
 app = Flask(__name__)
 
 app.json.ensure_ascii = False
+
+
+def get_db():
+   db = getattr(g, "_database", None)
+   if db is None:
+      db = g._database = sqlite3.connect(path_to_db)
+
+   def make_dict(cursor, row):
+      return dict((cursor.description[idx][0], value) for idx, value in enumerate(row))
+   
+   db.row_factory = make_dict
+
+   return db
+
+
+@app.teardown_appcontext
+def close_connection(exception):
+   db = getattr(g, "_database", None)
+   if db is not None:
+      db.close()
+
+
+def query_db(query, args=(), one=None):
+   cursor = get_db().execute(query, args)
+   if one:
+      result = cursor.fetchone()
+   else:
+      result = cursor.fetchall()
+   cursor.close()
+   return result
 
 # MAX_RATING = 5
 
@@ -49,37 +79,40 @@ app.json.ensure_ascii = False
 
 @app.route("/quotes")
 def quotes_list():
-   select_quotes = "SELECT * from quotes"
-   connection = sqlite3.connect(path_to_db)
-   cursor = connection.cursor()
-   cursor.execute(select_quotes)
-   quotes_db = cursor.fetchall() # list[tuple]
-   cursor.close()
-   connection.close()
-
-   result = []
-   keys = ("id", "author", "text")
-   for item in quotes_db:
-      quote = dict(zip(keys, item))
-      result.append(quote)
-   return jsonify(result), 200
+   query_text = "SELECT * from quotes"
+   quotes_db = query_db(query_text)
+   return jsonify(quotes_db), 200
+   # cursor = get_db().cursor()
+   # cursor.execute(select_quotes)
+   # quotes_db = cursor.fetchall() # list[tuple]
+   # cursor.close()
+   # result = []
+   # keys = ("id", "author", "text")
+   # for item in quotes_db:
+   #    quote = dict(zip(keys, item))
+   #    result.append(quote)
+   # return jsonify(result), 200
 
 
 @app.route("/quotes/<int:quote_id>")
 def quote_by_id(quote_id):
-   select_quotes = "SELECT * from quotes WHERE id=?"
-   connection = sqlite3.connect(path_to_db)
-   cursor = connection.cursor()
-   cursor.execute(select_quotes, (str(quote_id),))
-   quote = cursor.fetchone()
-   cursor.close()
-   connection.close()
-
+   query_text = "SELECT * from quotes WHERE id=?"
+   quote = query_db(query_text, (str(quote_id),), True)
    if quote:
-      keys = ("id", "author", "text")
-      return jsonify(dict(zip(keys, quote))), 200
+      return jsonify(quote), 200
    else:
       return jsonify(error=f"Цитата с id={quote_id} не найдена"), 404
+   # connection = sqlite3.connect(path_to_db)
+   # cursor = connection.cursor()
+   # cursor.execute(select_quotes, (str(quote_id),))
+   # quote = cursor.fetchone()
+   # cursor.close()
+   # connection.close()
+   # if quote:
+   #    keys = ("id", "author", "text")
+   #    return jsonify(dict(zip(keys, quote))), 200
+   # else:
+   #    return jsonify(error=f"Цитата с id={quote_id} не найдена"), 404
 
 
 # @app.route("/quotes/count")
@@ -96,23 +129,23 @@ def quote_by_id(quote_id):
 def create_quote():
    data = request.json
 
-   create_quotes = """
+   query_text = """
    INSERT INTO
    quotes (author,text)
    VALUES
    (?, ?);
    """
-   connection = sqlite3.connect(path_to_db)
-   cursor = connection.cursor()
-   cursor.execute(create_quotes, (data["author"], data["text"]))
-   id = cursor.lastrowid
-   connection.commit()
-   cursor.close()
-   connection.close()
 
-   quote = data.copy()
-   quote["id"] = id
-   return jsonify(quote), 200
+   if isinstance(data, list):
+      query_param = [(item["author"], item["text"]) for item in data]
+   else:
+      query_param = [(data["author"], data["text"])]
+   
+   cursor = get_db().executemany(query_text, query_param)
+   get_db().commit()
+   cursor.close()
+
+   return jsonify(result=f"Добавлено цитат - {len(query_param)}"), 200
 
 
 @app.route("/quotes/<int:quote_id>", methods=["PUT"])

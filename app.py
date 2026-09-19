@@ -1,6 +1,4 @@
-import sqlite3
-from typing import Any
-from flask import Flask, request, jsonify, g, abort
+from flask import Flask, request, jsonify
 from pathlib import Path
 
 from flask_sqlalchemy import SQLAlchemy
@@ -31,6 +29,7 @@ class QuoteModel(db.Model):
    rating: Mapped[int]
 
    RATING_RANGE = range(1,6)
+   DEFAULT_RATING = 1
 
    def __init__(self, author, text, rating):
       self.author = author
@@ -45,11 +44,27 @@ class QuoteModel(db.Model):
          "rating": self.rating
       }
 
+   @staticmethod
+   def validate_rating(rating):
+      if rating not in QuoteModel.RATING_RANGE:
+         return QuoteModel.DEFAULT_RATING
+      return rating
+
    @classmethod
    def create_quote(cls, data: dict):
-      fields = set("author", "text")
-      # if set(data.keys()) & fields == fields:
+      fields = ("author", "text")
+      values = [data.get(field) for field in fields]
 
+      values.append(cls.validate_rating(data.get("rating")))
+
+      if None in values:
+         return None
+      return cls(*values)
+
+   def edit_quote(self, data: dict):
+      self.author = data["author"] if data.get("author") else self.author
+      self.text = data["text"] if data.get("text") else self.text
+      self.rating = QuoteModel.validate_rating(data["rating"]) if data.get("rating") else self.rating
 
 
 @app.errorhandler(404)
@@ -67,11 +82,6 @@ def quotes_list():
 def quote_by_id(quote_id):
    quote_db = db.get_or_404(QuoteModel, quote_id, description=f"Не найдена цитата с id={quote_id}")
    return quote_db.to_dict(), 200
-   # quote_db = db.session.get(QuoteModel, quote_id)
-   # if quote_db:
-   #    return quote_db.to_dict(), 200
-   # else:
-   #    abort(404, f"Не найдена цитата с id={quote_id}")
    
 
 @app.route("/quotes", methods=['POST'])
@@ -80,79 +90,45 @@ def create_quote():
    if not isinstance(data, list):
       data = [data]
    
-   new_quotes = [QuoteModel(item["author"], item["text"], item.get("rating")) for item in data]
-   for item in new_quotes:
-      db.session.add(item)
-   db.session.commit()
-
-   return jsonify(result=f"Добавлено цитат: {len(new_quotes)}"), 200
-
-   # query_text = """
-   # INSERT INTO
-   # quotes (author,text)
-   # VALUES
-   # (?, ?);
-   # """
-
-   # if isinstance(data, list):
-   #    query_param = [(item["author"], item["text"]) for item in data]
-   # else:
-   #    query_param = [(data["author"], data["text"])]
+   quotes = []
+   for item in data:
+      new_quote = QuoteModel.create_quote(item)
+      if new_quote:
+         quotes.append(new_quote)
    
-   # cursor = get_db().executemany(query_text, query_param)
-   # get_db().commit()
-   # cursor.close()
+   if len(quotes):
+      db.session.add_all(quotes)
+      db.session.commit()
 
-   # return jsonify(result=f"Добавлено цитат: {len(query_param)}"), 200
+   return jsonify(result=f"Добавлено цитат: {len(quotes)}"), 200
 
 
 @app.route("/quotes/<int:quote_id>", methods=["PUT"])
 def edit_qoute(quote_id):
-   data = request.json
+   data = request.json.copy()
 
-   fields = [key+"=?" for key in data.keys()]
-   values = [value for value in data.values()]
+   quote = db.get_or_404(QuoteModel, quote_id, description=f"Не найдена цитата для редактирования с id={quote_id}")
+   quote.edit_quote(data)
+   db.session.commit()
 
-   query_text = f"""
-   UPDATE quotes 
-   SET {", ".join(fields)}
-   WHERE id=?
-   RETURNING id, author, text;
-   """
-
-   cursor = get_db().execute(query_text, (*values, quote_id))
-   quote = cursor.fetchone()
-   get_db().commit()
-   cursor.close()
-
-   if cursor.rowcount:      
-      return jsonify(quote), 200
-   else:
-      return jsonify(error=f"Цитата с id={quote_id} не найдена для изменения"), 404
+   return quote.to_dict(), 200
 
 
 @app.route("/quotes/<int:quote_id>", methods=["DELETE"])
 def delete_quote(quote_id):
-   query_text = "DELETE FROM quotes WHERE id=?;"
+   quote = db.get_or_404(QuoteModel, quote_id, description=f"Не найдена цитата для удаления с id={quote_id}")
+   db.session.delete(quote)
+   db.session.commit()
 
-   cursor = get_db().execute(query_text, (quote_id,))
-   get_db().commit()
-   rowcount = cursor.rowcount
-   cursor.close()
-
-   if rowcount:
-      return jsonify(result=f"Цитата с id={quote_id} успешно удалена"), 200
-   else:
-      return jsonify(error=f"Цитата с id={quote_id} не найдена для удаления"), 404
+   return jsonify(result=f"Цитата с id={quote_id} успешно удалена"), 200
 
 
-# @app.route("/quotes/filter")
-# def filter_quotes():
-#    args = request.args
-#    author = args.get("author")
-#    rating = args.get("rating")
-#    result = [item for item in quotes if (not author or item["author"] == author) and (not rating or item["rating"] == int(rating))]
-#    return result
+@app.route("/quotes/filter")
+def filter_quotes():
+   args = {key: value for key, value in request.args.items() if key in ("author", "rating")}
+   quotes = db.session.execute(db.select(QuoteModel).filter_by(**args)).scalars()
+   return jsonify([item.to_dict() for item in quotes]), 200 
+
 
 if __name__ == "__main__":
    app.run(debug=True)

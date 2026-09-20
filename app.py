@@ -5,6 +5,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String
+from flask_migrate import Migrate
 
 class Base(DeclarativeBase):
    pass
@@ -14,11 +15,13 @@ BASE_DIR = Path(__file__).parent
 app = Flask(__name__)
 
 app.config['JSON_AS_ASCII'] = False
-app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{BASE_DIR / 'main.db'}"
+app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{BASE_DIR / 'quotes.db'}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(model_class=Base)
 db.init_app(app)
+
+migrate = Migrate(app, db)
 
 class QuoteModel(db.Model):
    __tablename__ = 'quotes'

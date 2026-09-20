@@ -1,11 +1,13 @@
+import datetime
 from flask import Flask, request, jsonify
 from pathlib import Path
 
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, func, ForeignKey
+from sqlalchemy import String, func, ForeignKey, Integer, Boolean, DateTime
 from flask_migrate import Migrate
+from sqlalchemy.orm.attributes import flag_modified
 
 class Base(DeclarativeBase):
    pass
@@ -14,11 +16,12 @@ BASE_DIR = Path(__file__).parent
 
 app = Flask(__name__)
 
-# app.json.ensure_ascii = False
+app.json.ensure_ascii = False
 
 app.config['JSON_AS_ASCII'] = False
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{BASE_DIR / 'quotes.db'}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config["SQLALCHEMY_ECHO"] = True
 
 db = SQLAlchemy(model_class=Base)
 db.init_app(app)
@@ -30,15 +33,19 @@ class AuthorModel(db.Model):
    id: Mapped[int] = mapped_column(primary_key=True)
    name: Mapped[int] = mapped_column(String(32), index= True, unique=True)
    surname: Mapped[str] = mapped_column(String(32), index= True, server_default='undefined')
-   quotes: Mapped[list['QuoteModel']] = relationship( back_populates='author', lazy='dynamic')
+   quotes: Mapped[list['QuoteModel']] = relationship( back_populates='author', lazy='dynamic', cascade="all, delete-orphan")
+   # deleted: Mapped[bool] = mapped_column(Boolean, server_default='False')
+   is_deleted: Mapped[bool] = mapped_column(Boolean, server_default='0', default='0', nullable=False)
 
-   def __init__(self, name):
+   def __init__(self, name, surname):
       self.name = name
+      self.surname = surname
 
    def to_dict(self):
       return {
          "id": self.id,
          "name": self.name,
+         "surname": self.surname,
       }
 
 class QuoteModel(db.Model):
@@ -48,6 +55,8 @@ class QuoteModel(db.Model):
    author_id: Mapped[str] = mapped_column(ForeignKey('authors.id'))
    author: Mapped['AuthorModel'] = relationship(back_populates='quotes')
    text: Mapped[str] = mapped_column(String(255))
+   rating: Mapped[int] = mapped_column(Integer, nullable=False, server_default='1', default='1')
+   created: Mapped[datetime.datetime] = mapped_column(DateTime(), server_default=func.now())
 
    def __init__(self, author, text):
       self.author = author
@@ -56,17 +65,18 @@ class QuoteModel(db.Model):
    RATING_RANGE = range(1,6)
    DEFAULT_RATING = 1
 
-   def __init__(self, author, text):
+   def __init__(self, author, text, rating):
       self.author = author
       self.text  = text
-      # self.rating = rating
+      self.rating = QuoteModel.validate_rating(rating)
 
    def to_dict(self):
       return {
          "id": self.id,
          # "author": self.author,
          "text": self.text,
-         # "rating": self.rating
+         "rating": self.rating,
+         "created": self.created.strftime("%d.%m.%Y"),
       }
 
    @staticmethod
@@ -74,22 +84,17 @@ class QuoteModel(db.Model):
       if rating not in QuoteModel.RATING_RANGE:
          return QuoteModel.DEFAULT_RATING
       return rating
+   
+   def inc_rating(self):
+      rating = self.rating + 1
+      if rating in QuoteModel.RATING_RANGE:
+         self.rating = rating
 
-   @classmethod
-   def create_quote(cls, data: dict):
-      fields = ("author", "text")
-      values = [data.get(field) for field in fields]
+   def dec_rating(self):
+      rating = self.rating - 1
+      if rating in QuoteModel.RATING_RANGE:deleted
+         self.rating = rating
 
-      # values.append(cls.validate_rating(data.get("rating")))
-
-      if None in values:
-         return None
-      return cls(*values)
-
-   # def edit_quote(self, data: dict):
-   #    self.author = data["author"] if data.get("author") else self.author
-   #    self.text = data["text"] if data.get("text") else self.text
-      # self.rating = QuoteModel.validate_rating(data["rating"]) if data.get("rating") else self.rating
 
 
 @app.errorhandler(404)
@@ -102,7 +107,7 @@ def error_handler(error):
 @app.route("/authors")
 def authors_list():
    """Получение всех авторов"""
-   qauthors_db = db.session.scalars(db.select(AuthorModel)).all()
+   qauthors_db = db.session.scalars(db.select(AuthorModel).where(AuthorModel.is_deleted==False)).all()
    return jsonify([item.to_dict() for item in qauthors_db]), 200
 
 
@@ -127,7 +132,7 @@ def create_author():
    
    authors = []
    for item in data:
-      new_author = AuthorModel(item["name"])
+      new_author = AuthorModel(item["name"], item["surname"])
       authors.append(new_author)
    
    if len(authors):
@@ -144,6 +149,7 @@ def edit_author(author_id):
 
    author = db.get_or_404(AuthorModel, author_id, description=f"Не найден автор для редактирования с id={author_id}")
    author.name = data["name"]
+   author.surname = data["surname"]
    db.session.commit()
 
    return author.to_dict(), 200
@@ -153,10 +159,12 @@ def edit_author(author_id):
 def delete_author(author_id):
    """Удаление автора"""
    author = db.get_or_404(AuthorModel, author_id, description=f"Не найден автор для удаления с id={author_id}")
-   db.session.delete(author)
+   author.is_deleted = True
+   # flag_modified(author, "is_deleted")
+   # db.session.execute(db.update(AuthorModel).where(AuthorModel.id == author_id).values(deleted=True))
    db.session.commit()
 
-   return jsonify(result=f"Автор с id={author_id} успешно удален"), 200
+   return jsonify(result=f"Автор с id={author_id} успешно помечен на удаление"), 200
 
 
 @app.route("/authors/<int:author_id>/quotes", methods=['POST'])
@@ -170,7 +178,7 @@ def create_quote(author_id):
 
    quotes = []
    for item in data:
-      new_quote = QuoteModel(author, item["text"])
+      new_quote = QuoteModel(author, item["text"], item["rating"])
       quotes.append(new_quote)
    
    if len(quotes):
@@ -178,6 +186,13 @@ def create_quote(author_id):
       db.session.commit()
 
    return jsonify(result=f"Добавлено цитат автора: {len(quotes)}"), 200
+
+
+@app.route("/authors/filter")
+def filter_authors():
+   args = {key: value for key, value in request.args.items() if key in ("name", "surname")}
+   quotes = db.session.execute(db.select(AuthorModel).filter_by(**args)).scalars()
+   return jsonify([item.to_dict() for item in quotes]), 200 
 
 
 """Quotes"""
@@ -206,6 +221,7 @@ def edit_qoute(quote_id):
    quote = db.get_or_404(QuoteModel, quote_id, description=f"Не найдена цитата для редактирования с id={quote_id}")
    quote.author = author
    quote.text = data["text"]
+   quote.rating = QuoteModel.validate_rating(data["rating"])
    db.session.commit()
 
    return quote.to_dict(), 200
@@ -223,9 +239,29 @@ def delete_quote(quote_id):
 
 @app.route("/quotes/filter")
 def filter_quotes():
-   args = {key: value for key, value in request.args.items() if key in ("author_id",)}
+   args = {key: value for key, value in request.args.items() if key in ("author_id", "rating")}
    quotes = db.session.execute(db.select(QuoteModel).filter_by(**args)).scalars()
    return jsonify([item.to_dict() for item in quotes]), 200 
+
+
+@app.route("/quotes/<int:quote_id>/inc_rating", methods=["PUT"])
+def inc_qoute_rating(quote_id):
+   """Инкремент рейтинга"""
+   quote = db.get_or_404(QuoteModel, quote_id, description=f"Не найдена цитата для редактирования с id={quote_id}")
+   quote.inc_rating()
+   db.session.commit()
+
+   return quote.to_dict(), 200
+
+
+@app.route("/quotes/<int:quote_id>/dec_rating", methods=["PUT"])
+def dec_qoute_rating(quote_id):
+   """Декремент рейтинга"""
+   quote = db.get_or_404(QuoteModel, quote_id, description=f"Не найдена цитата для редактирования с id={quote_id}")
+   quote.dec_rating()
+   db.session.commit()
+
+   return quote.to_dict(), 200
 
 
 if __name__ == "__main__":

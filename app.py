@@ -14,6 +14,8 @@ BASE_DIR = Path(__file__).parent
 
 app = Flask(__name__)
 
+# app.json.ensure_ascii = False
+
 app.config['JSON_AS_ASCII'] = False
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{BASE_DIR / 'quotes.db'}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -34,6 +36,7 @@ class AuthorModel(db.Model):
 
    def to_dict(self):
       return {
+         "id": self.id,
          "name": self.name,
       }
 
@@ -52,7 +55,7 @@ class QuoteModel(db.Model):
    RATING_RANGE = range(1,6)
    DEFAULT_RATING = 1
 
-   def __init__(self, author, text, rating):
+   def __init__(self, author, text):
       self.author = author
       self.text  = text
       # self.rating = rating
@@ -60,7 +63,7 @@ class QuoteModel(db.Model):
    def to_dict(self):
       return {
          "id": self.id,
-         "author": self.author,
+         # "author": self.author,
          "text": self.text,
          # "rating": self.rating
       }
@@ -91,6 +94,17 @@ class QuoteModel(db.Model):
 @app.errorhandler(404)
 def error_handler(error):
    return jsonify(message = error.description), 404
+
+
+@app.route("/author/<int:author_id>/quotes")
+def auothor_quotes(author_id):
+   author = db.session.get(AuthorModel, author_id)
+
+   quotes = []
+   for item in author.quotes:
+      quotes.append(item.to_dict())
+
+   return jsonify(author=author.to_dict(), quotes=quotes), 200
 
 
 @app.route("/quotes")

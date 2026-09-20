@@ -3,8 +3,8 @@ from pathlib import Path
 
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import String, func, ForeignKey
 from flask_migrate import Migrate
 
 class Base(DeclarativeBase):
@@ -23,13 +23,31 @@ db.init_app(app)
 
 migrate = Migrate(app, db)
 
+class AuthorModel(db.Model):
+   __tablename__ = 'authors'
+   id: Mapped[int] = mapped_column(primary_key=True)
+   name: Mapped[int] = mapped_column(String(32), index= True, unique=True)
+   quotes: Mapped[list['QuoteModel']] = relationship( back_populates='author', lazy='dynamic')
+
+   def __init__(self, name):
+      self.name = name
+
+   def to_dict(self):
+      return {
+         "name": self.name,
+      }
+
 class QuoteModel(db.Model):
    __tablename__ = 'quotes'
 
    id: Mapped[int] = mapped_column(primary_key=True)
-   author: Mapped[str] = mapped_column(String(32))
+   author_id: Mapped[str] = mapped_column(ForeignKey('authors.id'))
+   author: Mapped['AuthorModel'] = relationship(back_populates='quotes')
    text: Mapped[str] = mapped_column(String(255))
-   rating: Mapped[int]
+
+   def __init__(self, author, text):
+      self.author = author
+      self.text  = text
 
    RATING_RANGE = range(1,6)
    DEFAULT_RATING = 1
@@ -37,14 +55,14 @@ class QuoteModel(db.Model):
    def __init__(self, author, text, rating):
       self.author = author
       self.text  = text
-      self.rating = rating
+      # self.rating = rating
 
    def to_dict(self):
       return {
          "id": self.id,
          "author": self.author,
          "text": self.text,
-         "rating": self.rating
+         # "rating": self.rating
       }
 
    @staticmethod
@@ -67,7 +85,7 @@ class QuoteModel(db.Model):
    def edit_quote(self, data: dict):
       self.author = data["author"] if data.get("author") else self.author
       self.text = data["text"] if data.get("text") else self.text
-      self.rating = QuoteModel.validate_rating(data["rating"]) if data.get("rating") else self.rating
+      # self.rating = QuoteModel.validate_rating(data["rating"]) if data.get("rating") else self.rating
 
 
 @app.errorhandler(404)
